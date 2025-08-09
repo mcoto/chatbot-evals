@@ -3,7 +3,7 @@ import streamlit as st
 
 CHATBOT_BASE_URL = os.getenv("CHATBOT_BASE_URL", "http://chatbot:8000")
 
-st.title("Chatbot Eval Lab — Demo UI")
+st.title("Creai Labs - Chatbot Eval (Demo UI)")
 
 with st.form("chat"):
     msg = st.text_input("Mensaje", value="Consulta el estado de mi pedido 2 y su factura")
