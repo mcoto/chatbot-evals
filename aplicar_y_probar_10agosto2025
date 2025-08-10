@@ -1,0 +1,18 @@
+# 1) Reconstruir y levantar el chatbot
+sudo docker compose build chatbot
+sudo docker compose up -d chatbot
+
+# 2) Salud
+curl -sf http://localhost:8000/health && echo OK
+
+# 3) (opcional) Ingestar RAG
+curl -s -X POST http://localhost:8000/admin/rag/ingest \
+  -H "X-Admin-Token: supersecret" \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/app/data/rag_corpus","pattern":"**/*.md"}' | jq .
+
+# 4) Probar ficha técnica (RAG + inventory)
+curl -s -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Muéstrame la ficha técnica del SKU-001","sku":"SKU-001"}' | jq .
+

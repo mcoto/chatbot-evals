@@ -1,0 +1,36 @@
+id: rag_ficha_tecnica
+version: 1
+risk_weight: 0.6
+
+invoke:
+  chatbot_url: "http://localhost:8000"
+  body:
+    message: "Muéstrame la ficha técnica del SKU-001"
+    sku: "SKU-001"
+
+# Para este test no necesitamos consultar Qdrant desde el runner.
+# Usamos la verdad viva de inventario solo para staleness si quisieras extender.
+truth_ops:
+  - id: item
+    type: http
+    url: "http://localhost:7003/inventory/SKU-001"
+    method: GET
+
+checks:
+  # 1) Debe haber usado RAG y adjuntar evidencia
+  - name: rag_used
+    type: not_null
+    from: "response.json.evidence.rag"
+
+  # 2) Debe citar la fuente en el texto de respuesta
+  - name: citation_in_text
+    type: contains
+    haystack: "response.text"
+    needle: "Fuente:"
+
+  # 3) Debe corresponder al SKU solicitado (según evidencia)
+  - name: rag_sku_match
+    type: equals
+    left: "response.json.evidence.rag[0].sku"
+    right: "item.sku"
+

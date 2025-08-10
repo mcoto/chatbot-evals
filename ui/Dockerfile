@@ -1,11 +1,14 @@
 FROM python:3.11-slim
 
-ENV PIP_NO_CACHE_DIR=1
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Streamlit port
 EXPOSE 8501
+
+# copia inicial 
+COPY . .
+
 CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
 

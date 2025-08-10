@@ -1,0 +1,188 @@
+Perfecto — te puedo preparar una documentación técnica completa que describa **qué hace el sistema, cómo está implementado y cómo interactúan sus componentes**, con todo el detalle posible según lo que tenemos hasta ahora.
+La estructuraría así para que sirva tanto a desarrolladores como a evaluadores:
+
+---
+
+# 📄 Chatbot Eval Lab – Technical Documentation
+
+## 1. Overview
+
+**Chatbot Eval Lab** es un entorno de referencia para experimentar con **evaluación de chatbots empresariales** bajo condiciones reales, en línea con el paper académico *Towards Reliable Evaluation of Enterprise Chatbots under Real-World Constraints*.
+
+Este entorno implementa:
+
+* **Un chatbot multi-fuente** que combina datos internos en tiempo real (APIs internas), información documental vía **RAG (Retrieval-Augmented Generation)** y, opcionalmente, un LLM.
+* **Un ground truth vivo** que cambia con el tiempo, permitiendo evaluar métricas sobre datos actualizados.
+* **Una interfaz web** para interactuar con el chatbot.
+* **Servicios simulados de negocio** para pedidos, facturación, inventario y políticas.
+* **Persistencia en Qdrant** para documentos RAG y en PostgreSQL para datos transaccionales.
+* **Infraestructura en Docker Compose** para ejecutar todo el stack.
+
+---
+
+## 2. System Architecture
+
+```
+                   ┌──────────────────────────┐
+                   │        Web UI             │
+                   │ (React + API Gateway)     │
+                   └─────────────┬─────────────┘
+                                 │
+                      REST over HTTP (JSON)
+                                 │
+                  ┌──────────────┴───────────────┐
+                  │        chatbot (FastAPI)     │
+                  │ - Orquestrador               │
+                  │ - Consulta APIs internas     │
+                  │ - Consulta RAG/Qdrant        │
+                  │ - Formatea respuestas        │
+                  └───────┬───────────────┬──────┘
+                          │               │
+            ┌─────────────┘               └──────────────┐
+            │                                             │
+┌─────────────────────────────┐             ┌──────────────────────────────┐
+│ Business APIs (FastAPI)     │             │   RAG Backend                 │
+│ - orders-api                 │             │ - Qdrant (vector DB)          │
+│ - billing-api                │             │ - retriever.py (ingest/query) │
+│ - inventory-api              │             │                               │
+│ - policy-api                 │             └──────────────────────────────┘
+└─────────────────────────────┘
+```
+
+---
+
+## 3. Components
+
+### 3.1 `chatbot` (FastAPI)
+
+* **Rol**: Orquestar las consultas a APIs internas, ejecutar búsquedas RAG y ensamblar la respuesta final.
+* **Endpoints principales**:
+
+  * `GET /health`: chequeo de estado.
+  * `POST /chat`: recibe un mensaje del usuario y parámetros opcionales (`order_id`, `sku`, `lang`).
+  * `POST /admin/rag/ingest`: ingesta masiva de documentos a Qdrant con metadatos (protegido por `X-Admin-Token`).
+* **Funciones clave**:
+
+  * Uso de `httpx.AsyncClient` para consultas concurrentes a APIs.
+  * Interpretación de intención simple mediante búsqueda de palabras clave.
+  * Enriquecimiento de respuesta con RAG si se detecta la necesidad.
+
+### 3.2 `retriever.py`
+
+* **Rol**: Abstraer operaciones con Qdrant (vector DB).
+* **Funciones**:
+
+  * `ingest(docs)`: procesa y guarda embeddings con metadatos.
+  * `search(query, top_k, filters)`: consulta documentos relevantes según similaridad y filtros (ej. SKU).
+* **Uso en chatbot**: llamado desde `/chat` y `/admin/rag/ingest`.
+
+### 3.3 Business APIs simuladas
+
+Todas implementadas con **FastAPI**:
+
+* `orders-api`: devuelve información de pedidos (`status`, `eta`, `id`).
+* `billing-api`: facturas asociadas a pedidos (`amount`, `currency`, `due_date`).
+* `inventory-api`: stock y precio por SKU.
+* `policy-api`: textos de políticas aplicables (ej. cláusulas por retrasos).
+
+Cada API expone:
+
+* `GET /health`
+* Endpoints específicos de recurso (ej. `/orders/{id}`).
+
+### 3.4 Bases de datos
+
+* **PostgreSQL (`gt-db`)**: almacena datos estructurados de pedidos, facturas, inventario y políticas.
+* **Qdrant (`rag-qdrant`)**: base de datos vectorial para contenido documental enriquecido (metadatos + embeddings).
+
+### 3.5 Web UI
+
+* **Rol**: interfaz de interacción con el chatbot.
+* Construida como aplicación React (`eval-ui`).
+* Consume `/chat` vía HTTP.
+* No contiene la lógica del chatbot, solo presenta y envía mensajes.
+
+---
+
+## 4. Data Flow
+
+1. **Usuario envía mensaje** desde Web UI o API (`POST /chat`).
+2. `chatbot`:
+
+   * Detecta intención (pedidos, facturas, inventario, documentos técnicos).
+   * Llama a APIs internas correspondientes.
+   * Si aplica, consulta RAG vía `retriever.search`.
+   * Combina respuestas en texto final.
+3. **Respuesta devuelta** con:
+
+   * `response`: texto listo para mostrar.
+   * `tools_used`: lista de servicios invocados.
+   * `evidence`: datos crudos devueltos por las APIs y RAG.
+4. **UI** renderiza el mensaje.
+
+---
+
+## 5. RAG Implementation Details
+
+* **Qdrant** como vector DB, ejecutándose en un contenedor Docker (`rag-qdrant`).
+* **Ingesta**:
+
+  * Archivos `.md` y `.txt` ubicados en `/app/data/rag_corpus`.
+  * Soporta *front matter YAML* para metadatos: `sku`, `source`, `lang`, `valid_from`, `valid_to`, `tags`.
+  * Almacenados con embeddings generados (modelo a definir).
+* **Consulta**:
+
+  * Filtrado opcional por SKU u otros metadatos.
+  * Retorna top-k documentos, ordenados por similaridad.
+  * El chatbot integra el primer resultado al mensaje.
+
+---
+
+## 6. Docker & Deployment
+
+### 6.1 Docker Compose
+
+* Un solo `docker-compose.yml` orquesta:
+
+  * `chatbot`
+  * `orders-api`, `billing-api`, `inventory-api`, `policy-api`
+  * `gt-db` (PostgreSQL con datos precargados)
+  * `rag-qdrant` (almacenamiento vectorial)
+  * `eval-ui` (interfaz web)
+
+### 6.2 Volúmenes
+
+* `chatbot-eval-lab_pgdata`: datos persistentes de PostgreSQL.
+* `chatbot-eval-lab_qdrant_storage`: datos persistentes de Qdrant.
+* `chatbot-eval-lab_ollama_models`: modelos descargados (opcional, si se integra LLM local).
+
+### 6.3 Redes
+
+* Una red interna de Docker para comunicación entre contenedores.
+* Servicios accesibles desde `chatbot` por nombre de host (`orders-api`, `rag-qdrant`, etc.).
+
+---
+
+## 7. Current Limitations
+
+* El chatbot actualmente **no invoca un LLM** para generar lenguaje natural — la respuesta es armada manualmente con datos estructurados y texto fijo.
+* RAG implementado pero pendiente de integrar un generador de embeddings.
+* Métricas de evaluación aún no implementadas — próximo paso según el paper.
+* Seguridad básica: solo `/admin/rag/ingest` protegido por token.
+
+---
+
+## 8. Next Steps
+
+* Integrar LLM (local vía Ollama o API externa) para enriquecer respuestas.
+* Implementar módulo de **evaluación automática** con métricas del paper (factualidad, completitud, tiempo de respuesta, etc.).
+* Ampliar ground truth vivo con más casos de negocio.
+* Añadir autenticación en todos los endpoints.
+* Scripts de ingestión automática y dataset de prueba para reproducibilidad.
+
+---
+
+Si quieres, te puedo preparar también un **README.md extendido** con esta misma información pero formateada para GitHub, incluyendo diagramas en Mermaid para que se vean en el repo.
+
+¿Quieres que lo haga en ese formato?
+

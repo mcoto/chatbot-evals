@@ -77,8 +77,11 @@ services:
   chatbot:
     build:
       context: ./apps/chatbot
+    volumes:
+      - ./data/rag_corpus:/app/data/rag_corpus:ro
     container_name: chatbot
     environment:
+      ADMIN_TOKEN: "supersecret"
       OLLAMA_BASE_URL: http://ollama:11434
       MODEL_ID: ${MODEL_ID:-llama3.1:8b}
       QDRANT_URL: http://qdrant:6333
@@ -99,17 +102,22 @@ services:
     ports:
       - "8000:8000"
 
+ 
+
   ui:
     build:
       context: ./ui
-    container_name: eval-ui
+    volumes:
+      - ./ui:/app
+      - ./eval:/app/eval
     environment:
       CHATBOT_BASE_URL: http://chatbot:8000
-      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
-    depends_on:
-      - chatbot
+      ADMIN_TOKEN: supersecret
+      DB_URL: postgresql+psycopg://gtuser:gtpass@db:5432/groundtruth
     ports:
       - "8501:8501"
+    depends_on:
+      - chatbot
 
 volumes:
   pgdata:

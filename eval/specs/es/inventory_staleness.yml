@@ -1,0 +1,39 @@
+id: inventory_staleness
+version: 1
+risk_weight: 0.5
+
+invoke:
+  chatbot_url: "http://localhost:8000"
+  body:
+    message: "Consulta inventario del sku SKU-002"
+    sku: "SKU-002"
+
+truth_ops:
+  - id: item
+    type: sql
+    conn: groundtruth
+    query: |
+      SELECT sku, name, stock, price::text as price, currency,
+             valid_from::text, valid_to::text,
+             (valid_to IS NOT NULL AND valid_to < CURRENT_DATE) AS is_stale
+      FROM inventory WHERE sku = :sku
+    args:
+      sku: "SKU-002"
+
+checks:
+  - name: inventory_sku_match
+    type: equals
+    left: "response.json.evidence.inventory.sku"
+    right: "item.sku"
+
+  - name: inventory_price_format
+    type: regex
+    from: "response.json.evidence.inventory.price"
+    pattern: "^[0-9]+(\\.[0-9]{1,2})?$"
+
+  - name: staleness_warning_if_expired
+    type: contains_if
+    condition: "truth['item']['is_stale'] == True"
+    haystack: "response.text"
+    needle: "ADVERTENCIA"
+

@@ -1,0 +1,44 @@
+id: order_status_simple
+version: 1
+risk_weight: 0.8
+
+invoke:
+  chatbot_url: "http://localhost:8000"
+  body:
+    message: "Consulta el estado de mi pedido 2 y su factura"
+    order_id: 2
+
+truth_ops:
+  - id: order
+    type: sql
+    conn: groundtruth
+    query: "SELECT id, status, eta::text FROM orders WHERE id = :order_id"
+    args:
+      order_id: 2
+
+  - id: invoice
+    type: http
+    url: "http://localhost:7002/invoices/by-order/2"
+    method: GET
+
+checks:
+  - name: order_status_exact
+    type: equals
+    left: "response.json.evidence.order.status"
+    right: "order.status"
+
+  - name: eta_exists
+    type: not_null
+    from: "response.json.evidence.order.eta"
+
+  - name: invoice_amount_format
+    type: regex
+    from: "response.json.evidence.invoice.amount"
+    pattern: "^[0-9]+(\\.[0-9]{1,2})?$"
+
+  - name: delayed_disclaimer_required
+    type: required_if
+    condition: "truth['order']['status'] == 'delayed'"
+    from: "response.text"
+    contains: "retrasado"
+

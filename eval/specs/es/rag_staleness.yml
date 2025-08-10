@@ -1,0 +1,27 @@
+id: rag_staleness
+version: 1
+risk_weight: 0.7
+
+invoke:
+  chatbot_url: "http://localhost:8000"
+  body:
+    message: "Necesito el manual o especificaciones del SKU-002"
+    sku: "SKU-002"
+
+truth_ops:
+  - id: inv
+    type: http
+    url: "http://localhost:7003/inventory/SKU-002"
+    method: GET
+
+checks:
+  - name: rag_used
+    type: not_null
+    from: "response.json.evidence.rag"
+
+  - name: staleness_warn_if_doc_expired
+    type: contains_if
+    condition: "truth['inv']['valid_to'] is not None"
+    haystack: "response.text"
+    needle: "ADVERTENCIA"
+
