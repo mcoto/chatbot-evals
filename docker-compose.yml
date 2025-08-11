@@ -91,6 +91,9 @@ services:
       INVENTORY_API_URL: http://inventory-api:8000
       POLICY_API_URL: http://policy-api:8000
       RAG_COLLECTION: ${RAG_COLLECTION:-docs}
+      OLLAMA_BASE_URL: http://ollama:11434
+      MODEL_ID: llama3.1:8b
+
     depends_on:
       - db
       - qdrant

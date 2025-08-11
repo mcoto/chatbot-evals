@@ -9,6 +9,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from rag.retriever import Retriever
+from llm.ollama_client import chat_ollama
 
 # ---------- Config ----------
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "changeme")
@@ -171,27 +172,65 @@ async def chat(body: ChatIn):
                 # No tumbar la respuesta; solo registrar
                 evidence["rag_error"] = str(e)
 
-    # --- Ensamblado de respuesta ---
+    # --- Ensamblado base (fallback) ---
+    base_parts = []
     if "order" in evidence:
         o = evidence["order"]
-        parts.append(f"Pedido #{o['id']} está en estado '{o['status']}' con ETA {o['eta']}.")
+        base_parts.append(f"Pedido #{o['id']} está en estado '{o['status']}' con ETA {o['eta']}.")
         if "policy" in evidence:
-            parts.append(evidence["policy"]["text"])
+            base_parts.append(evidence["policy"]["text"])
 
     if "invoice" in evidence:
         i = evidence["invoice"]
-        parts.append(f"Factura: {i['amount']} {i['currency']}, vence {i['due_date']}.")
+        base_parts.append(f"Factura: {i['amount']} {i['currency']}, vence {i['due_date']}.")
 
     if "inventory" in evidence:
         it = evidence["inventory"]
         stale_inv = " (ADVERTENCIA: ficha desactualizada)" if it.get("valid_to") else ""
-        parts.append(
+        base_parts.append(
             f"Inventario {it['sku']} - {it['name']}: stock {it['stock']}, "
             f"precio {it['price']} {it['currency']}{stale_inv}."
         )
 
-    if not parts:
-        parts.append("¿En qué puedo ayudarle? Puedes consultar pedidos, facturas o inventario (por SKU).")
+    # Mezcla con lo que ya agregaste de RAG en `parts`
+    base_text = " ".join(parts + base_parts) if (parts or base_parts) else \
+        "¿En qué puedo ayudarle? Puedes consultar pedidos, facturas o inventario (por SKU)."
 
-    return ChatOut(response=" ".join(parts), tools_used=tools_used, evidence=evidence)
+    # --- Si hay evidencia útil, pedimos una redacción al LLM ---
+    used_any_tool = bool(evidence) and ("orders-api" in tools_used or "inventory-api" in tools_used or "rag" in tools_used)
+    final_text = base_text
+    if used_any_tool:
+        # Compactar evidencia (corta) para el prompt
+        ev_summary = []
+        if evidence.get("order"):
+            o = evidence["order"]; ev_summary.append(f"ORDER(id={o['id']}, status={o['status']}, eta={o['eta']})")
+        if evidence.get("invoice"):
+            i = evidence["invoice"]; ev_summary.append(f"INVOICE(amount={i['amount']} {i['currency']}, due={i['due_date']})")
+        if evidence.get("inventory"):
+            it = evidence["inventory"]; ev_summary.append(f"INV(sku={it['sku']}, stock={it['stock']}, price={it['price']} {it['currency']})")
+        if evidence.get("rag"):
+            top = evidence["rag"][0]
+            stale = " desactualizado" if top.get("valid_to") else " vigente"
+            ev_summary.append(f"RAG(sku={top.get('sku')}, fuente={top.get('source')}, estado_doc={stale})")
+
+        system_msg = (
+            "Eres un asistente de atención al cliente.\n"
+            "Responde en español, cortés y claro. No inventes datos.\n"
+            "Usa exclusivamente la evidencia provista. Si algún dato falta, dilo.\n"
+            "Si detectas documento desactualizado o pedido retrasado, informa y propone siguiente mejor acción.\n"
+        )
+        user_msg = f"Consulta del usuario: {body.message}\nEVIDENCIA:\n- " + "\n- ".join(ev_summary)
+
+        try:
+            llm_answer = await chat_ollama([
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ])
+            if llm_answer:
+                final_text = llm_answer
+                tools_used.append("llm")
+        except Exception as e:
+            evidence["llm_error"] = str(e)  # fallback a base_text
+
+    return ChatOut(response=final_text, tools_used=tools_used, evidence=evidence)
 
