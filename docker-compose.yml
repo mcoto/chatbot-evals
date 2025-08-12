@@ -75,6 +75,8 @@ services:
       - "7004:8000"
 
   chatbot:
+    env_file:
+      - .env
     build:
       context: ./apps/chatbot
     volumes:
@@ -91,6 +93,7 @@ services:
       RAG_COLLECTION: ${RAG_COLLECTION:-docs}
       OLLAMA_BASE_URL: http://ollama:11434
       MODEL_ID: llama3.1:8b
+
 
     depends_on:
       - db

@@ -3,10 +3,10 @@ version: 1
 risk_weight: 0.5
 
 invoke:
-  chatbot_url: "http://localhost:8000"
+  chatbot_url: "http://chatbot:8000"
   body:
-    message: "Consulta inventario del sku SKU-002"
-    sku: "SKU-002"
+    message: "Muéstrame la ficha técnica del SKU-001"
+    sku: "SKU-001"
 
 truth_ops:
   - id: item

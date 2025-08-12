@@ -1,0 +1,11 @@
+name: prueba_inventario
+description: Evalúa respuesta con datos de inventario y RAG para SKU-001
+risk_weight: 1.0
+
+scenarios:
+  - message: "Muéstrame la ficha técnica del SKU-001"
+    expected_contains:
+      - "Router AC1200"
+      - "stock"
+      - "precio"
+

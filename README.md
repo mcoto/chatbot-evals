@@ -1,4 +1,4 @@
-# Chatbot Evaluation Lab
+# Creai-Labs Chatbot Evaluation Lab
 
 **A live, end-to-end environment for building, running, and evaluating enterprise chatbots under real-world constraints** — as described in the paper *Towards Reliable Evaluation of Enterprise Chatbots under Real-World Constraints*.
 
