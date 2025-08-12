@@ -9,7 +9,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from rag.retriever import Retriever
-from llm.ollama_client import chat_ollama
+from llm.ollama_client import chat_ollama  # usa /api/chat de Ollama
 
 # ---------- Config ----------
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "changeme")
@@ -17,6 +17,7 @@ ORDERS_API = os.getenv("ORDERS_API_URL", "http://orders-api:8000")
 BILLING_API = os.getenv("BILLING_API_URL", "http://billing-api:8000")
 INVENTORY_API = os.getenv("INVENTORY_API_URL", "http://inventory-api:8000")
 POLICY_API = os.getenv("POLICY_API_URL", "http://policy-api:8000")
+LLM_ENABLED = os.getenv("LLM_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 
 app = FastAPI(title="chatbot")
 
@@ -115,7 +116,7 @@ def admin_rag_ingest(
 async def chat(body: ChatIn):
     tools_used: list[str] = []
     evidence: dict = {}
-    parts: list[str] = []  # ¡inicializado antes de usar!
+    parts: list[str] = []  # mensajes que agregamos (RAG, etc.)
 
     msg = (body.message or "").lower()
     sku_param = body.sku
@@ -151,7 +152,7 @@ async def chat(body: ChatIn):
                 tools_used.append("inventory-api")
                 evidence["inventory"] = r.json()
 
-        # --- RAG (buscar ficha/manual/especificaciones o si hay SKU) ---
+        # --- RAG (ficha/manual/especificaciones o si hay SKU) ---
         if ("ficha" in msg) or ("manual" in msg) or ("especific" in msg) or (sku_param is not None):
             try:
                 rtr = get_retriever()
@@ -169,11 +170,10 @@ async def chat(body: ChatIn):
                     if top.get("source"):
                         parts.append(f"Fuente: {top.get('source')}")
             except Exception as e:
-                # No tumbar la respuesta; solo registrar
-                evidence["rag_error"] = str(e)
+                evidence["rag_error"] = str(e)  # no rompas la respuesta
 
     # --- Ensamblado base (fallback) ---
-    base_parts = []
+    base_parts: list[str] = []
     if "order" in evidence:
         o = evidence["order"]
         base_parts.append(f"Pedido #{o['id']} está en estado '{o['status']}' con ETA {o['eta']}.")
@@ -192,15 +192,16 @@ async def chat(body: ChatIn):
             f"precio {it['price']} {it['currency']}{stale_inv}."
         )
 
-    # Mezcla con lo que ya agregaste de RAG en `parts`
+    # Texto base si no usamos LLM o si falla
     base_text = " ".join(parts + base_parts) if (parts or base_parts) else \
         "¿En qué puedo ayudarle? Puedes consultar pedidos, facturas o inventario (por SKU)."
 
-    # --- Si hay evidencia útil, pedimos una redacción al LLM ---
-    used_any_tool = bool(evidence) and ("orders-api" in tools_used or "inventory-api" in tools_used or "rag" in tools_used)
+    # --- Redacción con LLM (opcional) ---
+    used_any_tool = bool(evidence) and any(t in tools_used for t in ("orders-api", "inventory-api", "rag"))
     final_text = base_text
-    if used_any_tool:
-        # Compactar evidencia (corta) para el prompt
+
+    if LLM_ENABLED and used_any_tool:
+        # Resumen corto de evidencia para prompt
         ev_summary = []
         if evidence.get("order"):
             o = evidence["order"]; ev_summary.append(f"ORDER(id={o['id']}, status={o['status']}, eta={o['eta']})")
@@ -210,14 +211,14 @@ async def chat(body: ChatIn):
             it = evidence["inventory"]; ev_summary.append(f"INV(sku={it['sku']}, stock={it['stock']}, price={it['price']} {it['currency']})")
         if evidence.get("rag"):
             top = evidence["rag"][0]
-            stale = " desactualizado" if top.get("valid_to") else " vigente"
-            ev_summary.append(f"RAG(sku={top.get('sku')}, fuente={top.get('source')}, estado_doc={stale})")
+            stale = "desactualizado" if top.get("valid_to") else "vigente"
+            ev_summary.append(f"RAG(sku={top.get('sku')}, fuente={top.get('source')}, doc={stale})")
 
         system_msg = (
             "Eres un asistente de atención al cliente.\n"
             "Responde en español, cortés y claro. No inventes datos.\n"
-            "Usa exclusivamente la evidencia provista. Si algún dato falta, dilo.\n"
-            "Si detectas documento desactualizado o pedido retrasado, informa y propone siguiente mejor acción.\n"
+            "Usa exclusivamente la evidencia provista. Si falta algo, dilo.\n"
+            "Si hay documento desactualizado o pedido retrasado, adviértelo y propone siguiente acción."
         )
         user_msg = f"Consulta del usuario: {body.message}\nEVIDENCIA:\n- " + "\n- ".join(ev_summary)
 

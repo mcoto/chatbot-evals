@@ -82,8 +82,6 @@ services:
     container_name: chatbot
     environment:
       ADMIN_TOKEN: "supersecret"
-      OLLAMA_BASE_URL: http://ollama:11434
-      MODEL_ID: ${MODEL_ID:-llama3.1:8b}
       QDRANT_URL: http://qdrant:6333
       DATABASE_URL: postgresql+psycopg://$DB_USER:$DB_PASSWORD@db:5432/$DB_NAME
       ORDERS_API_URL: http://orders-api:8000
